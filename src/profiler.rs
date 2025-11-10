@@ -70,7 +70,10 @@ impl Profiler {
         self.sample_groups.insert(name.to_string(), SampleGroup::new());
     }
 
-    pub fn begin_sample_in_group(&mut self, group_name: &str, algorithm: &str, entities: i32) {
+    pub fn begin_sample_in_group(&mut self, group_name: &str, algorithm: &str, entities: u32) {
+        if !self.sample_groups.contains_key(group_name) {
+            self.insert_sample_group(group_name);
+        }
         self.get_mut_sample_group(group_name).begin_sample(algorithm, entities);
     }
 
@@ -85,10 +88,10 @@ pub struct SampleGroup {
     // b    0.05 0.07 0.08 ...
     // c    0.09 0.1  0.11 ...
     current_algorithm: String,
-    current_entity_number: i32,
+    current_entity_number: u32,
     begin_instant: Instant,
     sample_ongoing: bool,
-    samples: HashMap<String, HashMap<i32, Vec<Duration>>>,
+    samples: HashMap<String, HashMap<u32, Vec<Duration>>>,
 }
 
 impl SampleGroup {
@@ -102,7 +105,7 @@ impl SampleGroup {
         }
     }
 
-    fn begin_sample(&mut self, name: &str, entities: i32) {
+    fn begin_sample(&mut self, name: &str, entities: u32) {
         self.current_algorithm = name.to_string();
         self.current_entity_number = entities;
         self.begin_instant = Instant::now();
@@ -145,8 +148,8 @@ impl SampleGroup {
         self.sample_ongoing = false;
     }
 
-    pub fn get_averages(&self) -> HashMap<String, HashMap<i32, Duration>> {
-        let mut averages: HashMap<String, HashMap<i32, Duration>> = HashMap::new();
+    pub fn get_averages(&self) -> HashMap<String, HashMap<u32, Duration>> {
+        let mut averages: HashMap<String, HashMap<u32, Duration>> = HashMap::new();
 
         for algorithm in self.samples.iter() {
             let algo_name = algorithm.0;
