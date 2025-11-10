@@ -3,6 +3,7 @@ mod profiler;
 mod physics;
 mod experiment;
 mod capsule;
+mod collider;
 
 use std::f32::consts::PI;
 use bevy::prelude::*;
@@ -83,17 +84,14 @@ fn add_capsules(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let mut transform_bottom = Transform::from_xyz(0., -250., 0.);
-    transform_bottom.rotate_axis(Dir3::Z, PI / 2.);
-
-    let mut transform_top = Transform::from_xyz(0., -50., 0.);
-    transform_top.rotate_axis(Dir3::Z, PI / 2.);
+    let pos_1 = vec3(0., -250., 0.);
+    let pos_2 = vec3(0., -50., 0.);
 
     commands.spawn(create_capsule(
         200.,
         20.,
         Color::srgb(0., 0., 0.),
-        transform_top,
+        pos_2,
         &mut meshes,
         &mut materials,
     ));
@@ -102,7 +100,7 @@ fn add_capsules(
         500.,
         20.,
         Color::srgb(0., 0., 0.),
-        transform_bottom,
+        pos_1,
         &mut meshes,
         &mut materials,
     ));
