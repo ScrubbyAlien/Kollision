@@ -1,7 +1,6 @@
 use std::f32::consts::PI;
 use bevy::prelude::*;
-use bevy::transform;
-use crate::physics::RigidBody;
+use crate::collider::CapsuleCollider;
 
 #[derive(Component)]
 pub struct Capsule {
@@ -16,7 +15,7 @@ pub fn create_capsule(
     position: Vec3,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<ColorMaterial>>,
-) -> (Capsule, Mesh2d, MeshMaterial2d<ColorMaterial>, Transform)
+) -> (Capsule, Mesh2d, MeshMaterial2d<ColorMaterial>, CapsuleCollider, Transform)
 {
     let capsule = Capsule { radius, length };
     let mesh = meshes.add(Capsule2d::new(radius, length));
@@ -28,6 +27,7 @@ pub fn create_capsule(
         capsule,
         Mesh2d(mesh),
         MeshMaterial2d(material),
+        CapsuleCollider::new(radius, length, &transform),
         transform
     )
 }

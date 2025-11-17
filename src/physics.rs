@@ -50,5 +50,5 @@ fn apply_gravity_and_velocity(bodies: Query<(&mut Transform, &mut RigidBody)>, t
         let frame_diff = body.velocity * time.delta_secs();
         transform.translation += frame_diff;
     }
-    profiler.end_sample_in_group("Physics", true);
+    profiler.end_sample_in_group("Physics", false);
 }

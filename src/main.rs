@@ -5,15 +5,15 @@ mod experiment;
 mod capsule;
 mod collider;
 
-use std::f32::consts::PI;
 use bevy::prelude::*;
 use profiler::ProfilerPlugin;
 use crate::experiment::ExperimentParameters;
 use rand::distr::StandardUniform;
 use rand::Rng;
 
-use ball::create_ball;
+use crate::ball::create_ball;
 use crate::capsule::create_capsule;
+use crate::collider::{CapsuleCollider, CircleCollider};
 
 const MIN_SIZE: f32 = 5.;
 const MAX_SIZE: f32 = 10.;
@@ -30,8 +30,10 @@ fn main() {
         .add_plugins((ProfilerPlugin, /*ProfilerPlugin::update_profiler(true)*/))
         .add_plugins(experiment::ExperimentPlugin(50, 0))
         .add_plugins(physics::PhysicsPlugin)
+        .add_plugins(collider::ColliderPlugin)
         .add_systems(Startup, setup)
         .add_systems(Startup, (add_balls, add_capsules))
+        .add_systems(Update, check_collision_with_capsules)
         // .add_systems(PostUpdate, print_average)
         .run();
 }
@@ -104,4 +106,21 @@ fn add_capsules(
         &mut meshes,
         &mut materials,
     ));
+}
+
+fn check_collision_with_capsules(
+    circles: Query<&CircleCollider>,
+    capsules: Query<&CapsuleCollider>,
+) {
+
+    // for in
+    for circle in circles {
+        for capsule in capsules {
+            if circle.collide_with_capsule(capsule) {
+                println!("{}", circle.position)
+            }
+        }
+    }
+
+    // todo: try with for i
 }
