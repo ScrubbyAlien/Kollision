@@ -5,7 +5,7 @@ mod experiment;
 mod capsule;
 mod collider;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use bevy::prelude::*;
 use profiler::ProfilerPlugin;
 use experiment::*;
@@ -31,13 +31,23 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(1., 1., 1.)))
         .add_plugins(DefaultPlugins)
         .add_plugins((ProfilerPlugin, /*ProfilerPlugin::update_profiler(true)*/))
-        .add_plugins(ExperimentPlugin(50, 50))
+        .add_plugins(ExperimentPlugin {
+            first: 50,
+            step: 50,
+            number_of_steps: 4,
+            sample_duration: Duration::from_secs(13),
+        })
         .add_plugins(PhysicsPlugin)
         .add_plugins(ColliderPlugin)
-        .add_systems(Startup, setup)
-        .add_systems(Startup, (add_balls, add_capsules))
-        .add_systems(Update, check_collision_with_capsules)
-        // .add_systems(PostUpdate, print_average)
+        .add_systems(Startup, (setup, add_balls, add_capsules).chain())
+        .add_systems(PreUpdate, clear_balls.run_if(on_message::<ExperimentProgress>))
+        .add_systems(
+            Update, (
+                add_balls.run_if(on_message::<ExperimentProgress>),
+                check_collision_with_capsules,
+                store_profiling_data.run_if(on_message::<ExperimentProgress>),
+            ).chain(),
+        )
         .run();
 }
 
@@ -45,7 +55,7 @@ fn setup(mut commands: Commands, mut profiler: ResMut<Profiler>, experiment_para
     commands.spawn(Camera2d);
     let algorithms: Vec<String> = vec![
         "None".to_string(),
-        "PairPruning".to_string(),
+        "PairDetection".to_string(),
         "BoundingBox".to_string(),
         "QuadTree".to_string()
     ];
@@ -62,8 +72,9 @@ fn add_balls(
     let mut rng = rand::rng();
     let x = -SPAWNING_RECT.width() / 2.;
     let y = (window.height() / 2.) - SPAWNING_RECT.height();
+    let size = info.current_sample_size();
 
-    for _i in 0..info.sample_sizes[9] { // 50 * (9 + 1)
+    for _i in 0..size {
         let tr: f32 = rng.sample(StandardUniform);
         let random_radius: f32 = MIN_SIZE + tr * (MAX_SIZE - MIN_SIZE);
 
@@ -79,6 +90,15 @@ fn add_balls(
             &mut meshes,
             &mut materials,
         ));
+    }
+}
+
+fn clear_balls(
+    balls: Query<Entity, With<Ball>>,
+    mut commands: Commands,
+) {
+    for ball in balls.iter() {
+        commands.entity(ball).despawn();
     }
 }
 
@@ -111,6 +131,7 @@ fn check_collision_with_capsules(
     capsules: Query<&CapsuleCollider>,
     mut profiler: ResMut<Profiler>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    experiment_parameters: Res<ExperimentParameters>,
 ) {
     let start = Instant::now();
 
@@ -134,8 +155,31 @@ fn check_collision_with_capsules(
             mat.color = Color::srgb(0.3, 0.3, 0.3);
         }
     }
+    let elapsed = start.elapsed().as_nanos();
 
-    profiler.record_cell_data("Collision", "None", "500", start.elapsed().as_nanos());
-    let nanos = profiler.get_table_ref("Collision").get_averages()[0][9];
-    println!("{:.1} ns: {:.1} calcs per second", nanos, 1_000_000_000. / nanos)
+    if experiment_parameters.max_samples_reached() { return; }
+    profiler.record_cell_data(
+        "Collision",
+        "None",
+        &experiment_parameters.current_sample_size_str(),
+        elapsed,
+    );
+}
+
+fn store_profiling_data(
+    profiler: Res<Profiler>,
+    mut reader: MessageReader<ExperimentProgress>,
+    mut app_exit: MessageWriter<AppExit>,
+    experiment_parameters: Res<ExperimentParameters>,
+) {
+    for message in reader.read() {
+        if &message.0 == "Done" {
+            profiler.write_to_csv("Collision", "collision_times").unwrap();
+            app_exit.write(AppExit::Success);
+            return;
+        }
+        let sample_size = &message.0;
+        let nanos = profiler.get_table_ref("Collision").get_averages()[0][experiment_parameters.sample_index - 1];
+        println!("Sample size: {sample_size:<4}  time: {nanos:>12.1} ns = {:.1} calcs per second", 1_000_000_000. / nanos);
+    }
 }

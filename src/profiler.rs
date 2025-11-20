@@ -1,6 +1,8 @@
 use std::cmp::max;
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::Write;
 use std::time::{Duration, Instant};
 
 pub struct ProfilerPlugin;
@@ -112,6 +114,36 @@ impl Profiler {
     ) {
         self.tables[table].insert_value_in_cell_by_indices(row, column, value);
     }
+
+    pub fn write_to_csv(&self, table: &str, file_name: &str) -> std::io::Result<()> {
+        let table_ref = self.get_table_ref(table);
+        let averages = table_ref.get_averages();
+        let mut file = File::create(format!("{}.csv", file_name))?;
+
+        file.write_all(table.as_bytes())?;
+        file.write_all(b",")?;
+
+        for col in table_ref.columns.clone() {
+            let c = format!("{},", col);
+            file.write_all(c.as_bytes())?;
+        }
+        file.write_all(b"\n")?;
+
+        for (i, row) in averages.iter().enumerate() {
+            if i < table_ref.rows.len() {
+                file.write_all(format!("{},", table_ref.rows[i]).as_bytes())?;
+            } else {
+                file.write_all(b" ,")?;
+            }
+
+            for cell in row {
+                file.write_all(format!("{},", cell).as_bytes())?;
+            }
+
+            file.write_all(b"\n")?;
+        }
+        Ok(())
+    }
 }
 
 pub const COLUMNS: usize = 200;
@@ -155,7 +187,11 @@ impl Table {
 
         for (row, column) in self.cells.iter().enumerate() {
             for (col, cell) in column.iter().enumerate() {
-                averages[row][col] = cell[1] as f64 / cell[0] as f64;
+                if cell[0] == 0 {
+                    averages[row][col] = 0.;
+                } else {
+                    averages[row][col] = cell[1] as f64 / cell[0] as f64;
+                }
             }
         }
 
