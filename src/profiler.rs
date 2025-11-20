@@ -123,20 +123,21 @@ impl Profiler {
         file.write_all(table.as_bytes())?;
         file.write_all(b",")?;
 
+        // write all column names
         for col in table_ref.columns.clone() {
             let c = format!("{},", col);
             file.write_all(c.as_bytes())?;
         }
         file.write_all(b"\n")?;
 
-        for (i, row) in averages.iter().enumerate() {
-            if i < table_ref.rows.len() {
-                file.write_all(format!("{},", table_ref.rows[i]).as_bytes())?;
-            } else {
-                file.write_all(b" ,")?;
-            }
+        'rows: for (i, row) in averages.iter().enumerate() {
+            // write the row name first, break if no row names left
+            if i >= table_ref.rows.len() { break 'rows; }
+            file.write_all(format!("{},", table_ref.rows[i]).as_bytes())?;
 
-            for cell in row {
+            'cols: for (i, cell) in row.iter().enumerate() {
+                // write only if there are column names left
+                if i >= table_ref.columns.len() { break 'cols; }
                 file.write_all(format!("{},", cell).as_bytes())?;
             }
 
