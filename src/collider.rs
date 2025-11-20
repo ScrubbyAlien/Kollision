@@ -41,7 +41,6 @@ impl CircleCollider {
 
     pub fn collide_with_capsule(&self, capsule: &CapsuleCollider) -> bool {
         // for simplicity, we assume the capsule is aligned to the x-axis
-        // todo: add profiling
 
         let left_x = capsule.position.x - capsule.length / 2.;
         let right_x = left_x + capsule.length;
@@ -67,7 +66,8 @@ impl CircleCollider {
             distance = difference.length_squared();
         }
 
-        distance <= capsule.radius * capsule.radius
+        let collision_distance = capsule.radius + self.radius;
+        distance <= collision_distance * collision_distance
     }
 
     pub fn bounding_box(&self) -> Rect {

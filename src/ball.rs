@@ -10,26 +10,36 @@ pub struct Ball {
     radius: f32,
 }
 
+#[derive(Bundle)]
+pub struct BallBundle {
+    ball: Ball,
+    mesh: Mesh2d,
+    material: MeshMaterial2d<ColorMaterial>,
+    body: RigidBody,
+    collider: CircleCollider,
+    transform: Transform,
+}
+
 pub fn create_ball(
     radius: f32,
     color: Color,
     transform: Transform,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<ColorMaterial>>,
-) -> (Ball, Mesh2d, MeshMaterial2d<ColorMaterial>, RigidBody, CircleCollider, Transform)
+) -> BallBundle
 {
     let ball = Ball { radius };
     let mesh = meshes.add(Circle::new(ball.radius));
     let material = materials.add(color);
 
-    (
+    BallBundle {
         ball,
-        Mesh2d(mesh),
-        MeshMaterial2d(material),
-        RigidBody::new().mass(radius * radius),
-        CircleCollider::new(radius, &transform),
-        transform
-    )
+        mesh: Mesh2d(mesh),
+        material: MeshMaterial2d(material),
+        body: RigidBody::new().mass(radius * radius),
+        collider: CircleCollider::new(radius, &transform),
+        transform,
+    }
 }
 
 

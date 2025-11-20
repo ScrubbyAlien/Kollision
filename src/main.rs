@@ -5,15 +5,18 @@ mod experiment;
 mod capsule;
 mod collider;
 
+use std::time::Instant;
 use bevy::prelude::*;
 use profiler::ProfilerPlugin;
-use crate::experiment::ExperimentParameters;
+use experiment::*;
+use physics::*;
 use rand::distr::StandardUniform;
 use rand::Rng;
 
-use crate::ball::create_ball;
-use crate::capsule::create_capsule;
-use crate::collider::{CapsuleCollider, CircleCollider};
+use ball::*;
+use capsule::*;
+use collider::*;
+use profiler::Profiler;
 
 const MIN_SIZE: f32 = 5.;
 const MAX_SIZE: f32 = 10.;
@@ -28,9 +31,9 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(1., 1., 1.)))
         .add_plugins(DefaultPlugins)
         .add_plugins((ProfilerPlugin, /*ProfilerPlugin::update_profiler(true)*/))
-        .add_plugins(experiment::ExperimentPlugin(50, 0))
-        .add_plugins(physics::PhysicsPlugin)
-        .add_plugins(collider::ColliderPlugin)
+        .add_plugins(ExperimentPlugin(50, 50))
+        .add_plugins(PhysicsPlugin)
+        .add_plugins(ColliderPlugin)
         .add_systems(Startup, setup)
         .add_systems(Startup, (add_balls, add_capsules))
         .add_systems(Update, check_collision_with_capsules)
@@ -38,18 +41,16 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, mut profiler: ResMut<Profiler>, experiment_parameters: Res<ExperimentParameters>) {
     commands.spawn(Camera2d);
+    let algorithms: Vec<String> = vec![
+        "None".to_string(),
+        "PairPruning".to_string(),
+        "BoundingBox".to_string(),
+        "QuadTree".to_string()
+    ];
+    profiler.create_table("Collision", algorithms, experiment_parameters.sample_sizes_as_str.clone());
 }
-
-#[allow(dead_code)]
-fn print_average(profiler: Res<profiler::Profiler>, mut messages: MessageReader<AppExit>) {
-    for _message in messages.read() {
-        let averages = profiler.get_sample_group(profiler::UPDATE).get_averages();
-        println!("average {}", averages[profiler::UPDATE][&0].as_micros());
-    }
-}
-
 
 fn add_balls(
     mut commands: Commands,
@@ -62,7 +63,7 @@ fn add_balls(
     let x = -SPAWNING_RECT.width() / 2.;
     let y = (window.height() / 2.) - SPAWNING_RECT.height();
 
-    for _i in 0..info.sample_sizes[0] {
+    for _i in 0..info.sample_sizes[9] { // 50 * (9 + 1)
         let tr: f32 = rng.sample(StandardUniform);
         let random_radius: f32 = MIN_SIZE + tr * (MAX_SIZE - MIN_SIZE);
 
@@ -74,7 +75,7 @@ fn add_balls(
         commands.spawn(create_ball(
             random_radius,
             Color::srgb(0.3, 0.3, 0.3),
-            Transform::from_xyz(random_x, random_y, 0.),
+            Transform::from_xyz(random_x, random_y, 1.),
             &mut meshes,
             &mut materials,
         ));
@@ -86,14 +87,11 @@ fn add_capsules(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let pos_1 = vec3(0., -250., 0.);
-    let pos_2 = vec3(0., -50., 0.);
-
     commands.spawn(create_capsule(
         200.,
         20.,
         Color::srgb(0., 0., 0.),
-        pos_2,
+        vec3(0., -50., 0.),
         &mut meshes,
         &mut materials,
     ));
@@ -102,25 +100,39 @@ fn add_capsules(
         500.,
         20.,
         Color::srgb(0., 0., 0.),
-        pos_1,
+        vec3(0., -250., 0.),
         &mut meshes,
         &mut materials,
     ));
 }
 
 fn check_collision_with_capsules(
-    circles: Query<&CircleCollider>,
+    circles: Query<(&CircleCollider, &MeshMaterial2d<ColorMaterial>), With<Ball>>,
     capsules: Query<&CapsuleCollider>,
+    mut profiler: ResMut<Profiler>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
+    let start = Instant::now();
 
-    // for in
-    for circle in circles {
+    for (circle, material) in circles {
+        let mat = materials.get_mut(material).unwrap();
+        let mut collided = false;
         for capsule in capsules {
             if circle.collide_with_capsule(capsule) {
-                println!("{}", circle.position)
+                collided = true;
             }
+        }
+        if collided {
+            mat.color = Color::srgb(1., 0., 0.);
+        } else {
+            mat.color = Color::srgb(0.3, 0.3, 0.3);
         }
     }
 
-    // todo: try with for i
+    profiler.record_cell_data("Collision", "None", "500", start.elapsed().as_nanos());
+    let nanos = profiler.get_table_ref("Collision").get_averages()[0][9];
+    println!("{:.1} ns: {:.1} calcs per second", nanos, 1_000_000_000. / nanos)
+
+
+
 }

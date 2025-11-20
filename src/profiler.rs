@@ -1,5 +1,6 @@
+use std::cmp::max;
 use bevy::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 pub struct ProfilerPlugin;
@@ -19,155 +20,142 @@ impl ProfilerPlugin {
 
 impl Plugin for UpdateProfilerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PreStartup, add_update_profiler);
-        app.add_systems(PreUpdate, begin_update_sample);
+        app.add_systems(PreStartup, add_update_profiler_table);
+        app.add_systems(First, store_update_instant);
         if self.0 {
-            app.add_systems(PostUpdate, end_update_sample_print);
+            app.add_systems(Last, record_update_duration);
         } else {
-            app.add_systems(PostUpdate, end_update_sample);
+            // app.add_systems(Last, end_update_sample);
         }
     }
 }
 
 pub const UPDATE: &str = "Update";
 
-fn add_update_profiler(mut profiler: ResMut<Profiler>) {
-    profiler.insert_sample_group(UPDATE);
+fn add_update_profiler_table(mut profiler: ResMut<Profiler>) {
+    let columns = vec!["Frame time".to_string()];
+    let rows = vec!["Update".to_string()];
+    profiler.create_table(UPDATE, columns, rows);
 }
 
-fn begin_update_sample(mut profiler: ResMut<Profiler>) {
-    profiler.begin_sample_in_group(UPDATE, UPDATE, 0);
+fn store_update_instant(mut profiler: ResMut<Profiler>) {
+    profiler.store_instant(UPDATE);
 }
 
-fn end_update_sample_print(mut profiler: ResMut<Profiler>) {
-    profiler.end_sample_in_group(UPDATE, true);
+fn record_update_duration(mut profiler: ResMut<Profiler>) {
+    let duration = profiler.get_duration(UPDATE);
+    profiler.record_cell_data_by_table_row_col_index(0, 0, 0, duration.as_nanos());
 }
 
-fn end_update_sample(mut profiler: ResMut<Profiler>) {
-    profiler.end_sample_in_group(UPDATE, false);
-}
+// fn end_update_sample(mut profiler: ResMut<Profiler>) {
+//     profiler.end_sample_in_group(UPDATE, false);
+// }
 
 
 #[derive(Resource)]
 pub struct Profiler {
-    pub sample_groups: HashMap<String, SampleGroup>,
+    pub tables: Vec<Table>,
+    pub table_names: Vec<String>,
+    pub instants: HashMap<String, Instant>,
 }
 
 impl Profiler {
     fn new() -> Profiler {
-        Profiler { sample_groups: HashMap::new() }
-    }
-
-    pub fn get_sample_group(&self, name: &str) -> &SampleGroup {
-        self.sample_groups.get(name).unwrap()
-    }
-
-    pub fn get_mut_sample_group(&mut self, name: &str) -> &mut SampleGroup {
-        self.sample_groups.get_mut(name).unwrap()
-    }
-
-    pub fn insert_sample_group(&mut self, name: &str) {
-        self.sample_groups.insert(name.to_string(), SampleGroup::new());
-    }
-
-    pub fn begin_sample_in_group(&mut self, group_name: &str, algorithm: &str, entities: u32) {
-        if !self.sample_groups.contains_key(group_name) {
-            self.insert_sample_group(group_name);
+        Profiler {
+            tables: Vec::new(),
+            table_names: Vec::new(),
+            instants: HashMap::new(),
         }
-        self.get_mut_sample_group(group_name).begin_sample(algorithm, entities);
     }
 
-    pub fn end_sample_in_group(&mut self, group_name: &str, print: bool) {
-        self.get_mut_sample_group(group_name).end_sample(print);
+    pub fn store_instant(&mut self, instant: &str) {
+        self.instants.insert(instant.to_string(), Instant::now());
+    }
+
+    pub fn get_duration(&mut self, instant: &str) -> Duration {
+        self.instants.get(instant).unwrap().elapsed()
+    }
+
+    pub fn create_table(
+        &mut self,
+        table_name: &str,
+        rows: Vec<String>,
+        columns: Vec<String>,
+    ) -> usize {
+        let table_index = self.tables.len();
+        self.tables.push(Table::new(columns, rows));
+        self.table_names.push(table_name.to_string());
+
+        table_index
+    }
+
+    pub fn get_table_ref(&self, table_name: &str) -> &Table {
+        let index = self.table_names.iter().position(|s| { s == table_name }).unwrap();
+        &self.tables[index]
+    }
+
+    pub fn record_cell_data(&mut self, table: &str, row: &str, column: &str, value: u128) {
+        let table_index = self.table_names.iter().position(|s| { s == table }).unwrap();
+        self.record_cell_data_by_table_index(table_index, row, column, value);
+    }
+
+    pub fn record_cell_data_by_table_index(&mut self, table: usize, row: &str, column: &str, value: u128) {
+        self.tables[table].insert_value_in_cell(row, column, value);
+    }
+
+    pub fn record_cell_data_by_table_row_col_index(
+        &mut self,
+        table: usize,
+        row: usize,
+        column: usize,
+        value: u128,
+    ) {
+        self.tables[table].insert_value_in_cell_by_indices(row, column, value);
     }
 }
 
-pub struct SampleGroup {
-    // algo 50   100  150 ... (number of entities)
-    // a    0.1  0.3  0.7 ...
-    // b    0.05 0.07 0.08 ...
-    // c    0.09 0.1  0.11 ...
-    current_algorithm: String,
-    current_entity_number: u32,
-    begin_instant: Instant,
-    sample_ongoing: bool,
-    samples: HashMap<String, HashMap<u32, Vec<Duration>>>,
+pub const COLUMNS: usize = 200;
+pub const ROWS: usize = 10;
+
+pub struct Table {
+    columns: Vec<String>,
+    rows: Vec<String>,
+    cells: [[[u128; 2]; COLUMNS]; ROWS],
 }
 
-impl SampleGroup {
-    fn new() -> SampleGroup {
-        SampleGroup {
-            current_algorithm: "".to_string(),
-            current_entity_number: 0,
-            begin_instant: Instant::now(),
-            samples: HashMap::new(),
-            sample_ongoing: false,
+impl Table {
+    fn new(columns: Vec<String>, rows: Vec<String>) -> Self {
+        Table {
+            columns,
+            rows,
+            cells: [[[0, 0]; COLUMNS]; ROWS],
         }
     }
 
-    fn begin_sample(&mut self, name: &str, entities: u32) {
-        self.current_algorithm = name.to_string();
-        self.current_entity_number = entities;
-        self.begin_instant = Instant::now();
-        self.sample_ongoing = true;
+    pub fn insert_value_in_cell(&mut self, row: &str, column: &str, value: u128) {
+        let row_index = self.rows.iter().position(|s| { s == row }).unwrap();
+        let column_index = self.columns.iter().position(|s| { s == column }).unwrap();
+        self.insert_value_in_cell_by_indices(row_index, column_index, value);
     }
 
-    fn end_sample(&mut self, print: bool) {
-        if !self.sample_ongoing { return; }
-
-        if self.samples.contains_key(&self.current_algorithm) {
-            if self.samples[&self.current_algorithm].contains_key(&self.current_entity_number) {
-                // push new duration on existing algo + entity number combo
-                self.samples
-                    .get_mut(&self.current_algorithm).unwrap()
-                    .get_mut(&self.current_entity_number).unwrap()
-                    .push(self.begin_instant.elapsed());
-            } else {
-                // create new vec with durations to be appended to later
-                let duration = vec![self.begin_instant.elapsed()];
-                self.samples
-                    .get_mut(&self.current_algorithm).unwrap()
-                    .insert(self.current_entity_number, duration);
-            }
-        } else {
-            // create new hashmap for new algorithm
-            let duration = vec![self.begin_instant.elapsed()];
-            let entity_number = HashMap::from([
-                (self.current_entity_number, duration)
-            ]);
-            self.samples.insert(self.current_algorithm.to_string(), entity_number);
-        }
-
-        if print {
-            let algorithm_padded = format!("{:20}", &self.current_algorithm);
-            let entity_padded = format!("{:5}", self.current_entity_number);
-            let duration = self.begin_instant.elapsed().as_nanos().to_string();
-            println!("{}   {}   {:}", algorithm_padded, entity_padded, duration);
-        }
-
-        self.sample_ongoing = false;
+    pub fn insert_value_in_cell_by_indices(
+        &mut self,
+        row_index: usize,
+        column_index: usize,
+        value: u128,
+    ) {
+        let mut cell = self.cells[row_index][column_index];
+        cell[0] += 1; // increment number of times we have recorded data for this cell
+        cell[1] += value; // increase by the value of this recording, so we can average later
+        self.cells[row_index][column_index] = cell;
     }
 
-    pub fn get_averages(&self) -> HashMap<String, HashMap<u32, Duration>> {
-        let mut averages: HashMap<String, HashMap<u32, Duration>> = HashMap::new();
+    pub fn get_averages(&self) -> [[f64; COLUMNS]; ROWS] {
+        let mut averages: [[f64; COLUMNS]; ROWS] = [[0.; COLUMNS]; ROWS];
 
-        for algorithm in self.samples.iter() {
-            let algo_name = algorithm.0;
-            for entity_number in algorithm.1.iter() {
-                let number = entity_number.0;
-                let length = entity_number.1.len();
-                let mut sum = Duration::from_nanos(0);
-                for i in 0..length {
-                    sum += entity_number.1[i];
-                }
-                let avg: Duration = sum / length as u32;
-                if averages.contains_key(algo_name) {
-                    averages.get_mut(algo_name).unwrap().insert(*number, avg);
-                } else {
-                    let mut map = HashMap::new();
-                    map.insert(*number, avg);
-                    averages.insert(algo_name.to_string(), map);
-                }
+        for (row, column) in self.cells.iter().enumerate() {
+            for (col, cell) in column.iter().enumerate() {
+                averages[row][col] = cell[1] as f64 / cell[0] as f64;
             }
         }
 
