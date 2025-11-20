@@ -107,18 +107,24 @@ fn add_capsules(
 }
 
 fn check_collision_with_capsules(
-    circles: Query<(&CircleCollider, &MeshMaterial2d<ColorMaterial>), With<Ball>>,
+    circles: Query<(Entity, &CircleCollider, &MeshMaterial2d<ColorMaterial>), With<Ball>>,
     capsules: Query<&CapsuleCollider>,
     mut profiler: ResMut<Profiler>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     let start = Instant::now();
 
-    for (circle, material) in circles {
+    for (e1, circle, material) in circles {
         let mat = materials.get_mut(material).unwrap();
         let mut collided = false;
         for capsule in capsules {
             if circle.collide_with_capsule(capsule) {
+                collided = true;
+            }
+        }
+        'inner: for (e2, other_circle, _) in circles {
+            if e1.eq(&e2) { continue 'inner; }
+            if circle.collide_with_circle(other_circle) {
                 collided = true;
             }
         }
@@ -132,7 +138,4 @@ fn check_collision_with_capsules(
     profiler.record_cell_data("Collision", "None", "500", start.elapsed().as_nanos());
     let nanos = profiler.get_table_ref("Collision").get_averages()[0][9];
     println!("{:.1} ns: {:.1} calcs per second", nanos, 1_000_000_000. / nanos)
-
-
-
 }
