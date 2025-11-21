@@ -4,6 +4,7 @@ use bevy::prelude::*;
 pub struct ExperimentPlugin {
     pub first: usize,
     pub step: usize,
+    pub variations: usize,
     pub number_of_steps: usize,
     pub sample_duration: Duration,
 }
@@ -16,13 +17,11 @@ impl Plugin for ExperimentPlugin {
             self.step,
             self.number_of_steps,
             self.sample_duration,
+            self.variations,
         ));
         app.add_systems(Update, progress_experiment);
     }
 }
-
-#[derive(Message)]
-pub struct ExperimentProgress(pub(crate) String);
 
 #[derive(Resource)]
 pub struct ExperimentParameters {
@@ -32,10 +31,18 @@ pub struct ExperimentParameters {
     pub number_samples: usize,
     sample_duration: Duration,
     current_sample_progress: Duration,
+    pub variation_index: usize,
+    pub number_variations: usize,
 }
 
 impl ExperimentParameters {
-    fn new(first: usize, step: usize, number_samples: usize, sample_duration: Duration) -> ExperimentParameters {
+    fn new(
+        first: usize,
+        step: usize,
+        number_samples: usize,
+        sample_duration: Duration,
+        number_variations: usize,
+    ) -> ExperimentParameters {
         let sample_sizes = generate_sample_sizes(first, step);
         let mut sample_sizes_as_str: Vec<String> = Vec::with_capacity(100);
         for sample_size in sample_sizes.iter() {
@@ -49,6 +56,8 @@ impl ExperimentParameters {
             number_samples,
             sample_duration,
             current_sample_progress: Duration::from_secs(0),
+            number_variations,
+            variation_index: 0,
         }
     }
 
@@ -60,8 +69,16 @@ impl ExperimentParameters {
         self.sample_sizes_as_str[self.sample_index].clone()
     }
 
-    pub fn max_samples_reached(&self) -> bool {
-        self.sample_index >= self.number_samples
+    /// return false if there is no next variation
+    pub fn next_variation(&mut self) -> bool {
+        self.variation_index += 1;
+        self.variation_index < self.number_variations
+    }
+
+    /// return false if there is no next sample
+    pub fn next_sample(&mut self) -> bool {
+        self.sample_index += 1;
+        self.sample_index < self.number_samples
     }
 }
 
@@ -72,26 +89,39 @@ fn generate_sample_sizes(first: usize, step: usize) -> [usize; 100] {
     for i in 0..100 {
         array[i] = first + (step * i);
     }
+
     array
 }
 
+
+/// * `0`: previous sample size index
+/// * `1`: previous variation index
+/// * `2`: last sample
+#[derive(Message)]
+pub struct ExperimentProgress(pub usize, pub usize, pub bool);
+
 fn progress_experiment(
     mut parameters: ResMut<ExperimentParameters>,
-    time: Res<Time>,
     mut writer: MessageWriter<ExperimentProgress>,
+    time: Res<Time>,
 ) {
-    // todo: progress between different algorithms
-
     parameters.current_sample_progress += Duration::from_secs_f32(time.delta_secs());
-    if parameters.current_sample_progress >= parameters.sample_duration {
-        let prev_sample_size = parameters.current_sample_size_str();
-        parameters.sample_index += 1;
-        if parameters.max_samples_reached() {
-            writer.write(ExperimentProgress(prev_sample_size));
-            writer.write(ExperimentProgress("Done".to_string()));
-            return;
-        }
-        parameters.current_sample_progress = Duration::from_secs(0);
-        writer.write(ExperimentProgress(prev_sample_size));
+    if parameters.current_sample_progress < parameters.sample_duration { return; }
+
+    let prev_sample_size_index = parameters.sample_index;
+    let prev_variation_index = parameters.variation_index;
+
+    let last_sample = !parameters.next_sample(); // increment sample index
+    let mut last_variation = false;
+    if last_sample {
+        last_variation = !parameters.next_variation(); // increment variation index
+        parameters.sample_index = 0; // reset sample index
     }
+
+    parameters.current_sample_progress = Duration::from_secs(0);
+    writer.write(ExperimentProgress(
+        prev_sample_size_index,
+        prev_variation_index,
+        last_sample && last_variation,
+    ));
 }

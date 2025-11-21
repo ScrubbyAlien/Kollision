@@ -143,6 +143,7 @@ impl Profiler {
 
             file.write_all(b"\n")?;
         }
+        println!("Successful write to {}.csv", file_name);
         Ok(())
     }
 }
@@ -151,8 +152,8 @@ pub const COLUMNS: usize = 200;
 pub const ROWS: usize = 10;
 
 pub struct Table {
-    columns: Vec<String>,
-    rows: Vec<String>,
+    pub columns: Vec<String>,
+    pub rows: Vec<String>,
     cells: [[[u128; 2]; COLUMNS]; ROWS],
 }
 

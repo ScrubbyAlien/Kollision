@@ -32,10 +32,11 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins((ProfilerPlugin, /*ProfilerPlugin::update_profiler(true)*/))
         .add_plugins(ExperimentPlugin {
-            first: 50,
-            step: 50,
-            number_of_steps: 4,
-            sample_duration: Duration::from_secs(13),
+            first: 100,
+            step: 100,
+            number_of_steps: 100,
+            sample_duration: Duration::from_secs_f32(0.5),
+            variations: 4,
         })
         .add_plugins(PhysicsPlugin)
         .add_plugins(ColliderPlugin)
@@ -51,7 +52,10 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands, mut profiler: ResMut<Profiler>, experiment_parameters: Res<ExperimentParameters>) {
+#[derive(Resource)]
+struct CollisionTableIndex(usize);
+
+fn setup(mut commands: Commands, mut profiler: ResMut<Profiler>, exp_params: Res<ExperimentParameters>) {
     commands.spawn(Camera2d);
     let algorithms: Vec<String> = vec![
         "None".to_string(),
@@ -59,20 +63,22 @@ fn setup(mut commands: Commands, mut profiler: ResMut<Profiler>, experiment_para
         "BoundingBox".to_string(),
         "QuadTree".to_string()
     ];
-    profiler.create_table("Collision", algorithms, experiment_parameters.sample_sizes_as_str.clone());
+    let sample_slice = Vec::from(&exp_params.sample_sizes_as_str[..exp_params.number_samples]);
+    let index = profiler.create_table("Collision", algorithms, sample_slice);
+    commands.insert_resource(CollisionTableIndex(index));
 }
 
 fn add_balls(
     mut commands: Commands,
     window: Single<&Window>,
-    info: Res<ExperimentParameters>,
+    experiment_parameters: Res<ExperimentParameters>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     let mut rng = rand::rng();
     let x = -SPAWNING_RECT.width() / 2.;
     let y = (window.height() / 2.) - SPAWNING_RECT.height();
-    let size = info.current_sample_size();
+    let size = experiment_parameters.current_sample_size();
 
     for _i in 0..size {
         let tr: f32 = rng.sample(StandardUniform);
@@ -132,6 +138,7 @@ fn check_collision_with_capsules(
     mut profiler: ResMut<Profiler>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     experiment_parameters: Res<ExperimentParameters>,
+    table_index: Res<CollisionTableIndex>,
 ) {
     let start = Instant::now();
 
@@ -143,8 +150,8 @@ fn check_collision_with_capsules(
                 collided = true;
             }
         }
-        'inner: for (e2, other_circle, _) in circles {
-            if e1.eq(&e2) { continue 'inner; }
+        'circles: for (e2, other_circle, _) in circles {
+            if e1.eq(&e2) { continue 'circles; }
             if circle.collide_with_circle(other_circle) {
                 collided = true;
             }
@@ -157,29 +164,33 @@ fn check_collision_with_capsules(
     }
     let elapsed = start.elapsed().as_nanos();
 
-    if experiment_parameters.max_samples_reached() { return; }
-    profiler.record_cell_data(
-        "Collision",
-        "None",
-        &experiment_parameters.current_sample_size_str(),
+    profiler.record_cell_data_by_table_row_col_index(
+        table_index.0,
+        experiment_parameters.variation_index,
+        experiment_parameters.sample_index,
         elapsed,
     );
 }
 
 fn store_profiling_data(
     profiler: Res<Profiler>,
+    experiment_parameters: Res<ExperimentParameters>,
+    collision_table_index: Res<CollisionTableIndex>,
     mut reader: MessageReader<ExperimentProgress>,
     mut app_exit: MessageWriter<AppExit>,
-    experiment_parameters: Res<ExperimentParameters>,
 ) {
     for message in reader.read() {
-        if &message.0 == "Done" {
+        let sample_size = &experiment_parameters.sample_sizes_as_str[message.0];
+        let nanos = profiler.tables[collision_table_index.0].get_averages()[message.1][message.0];
+        let algo = &profiler.tables[collision_table_index.0].rows[message.1];
+        println!("({algo}) Sample size: {:>5}  time: {nanos:>10.1} ns = {:>7.1} calcs per second",
+                 sample_size,
+                 1_000_000_000. / nanos
+        );
+
+        if message.2 { // check if this is the last sample
             profiler.write_to_csv("Collision", "collision_times").unwrap();
             app_exit.write(AppExit::Success);
-            return;
         }
-        let sample_size = &message.0;
-        let nanos = profiler.get_table_ref("Collision").get_averages()[0][experiment_parameters.sample_index - 1];
-        println!("Sample size: {sample_size:<4}  time: {nanos:>12.1} ns = {:.1} calcs per second", 1_000_000_000. / nanos);
     }
 }
