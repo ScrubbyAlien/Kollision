@@ -4,19 +4,21 @@ mod physics;
 mod experiment;
 mod capsule;
 mod collider;
+mod collision_algorithms;
 
-use std::time::{Duration, Instant};
 use bevy::prelude::*;
-use profiler::ProfilerPlugin;
-use experiment::*;
-use physics::*;
+use bevy::color::palettes::basic::*;
+use std::time::{Duration};
 use rand::distr::StandardUniform;
 use rand::Rng;
 
+use experiment::*;
+use physics::*;
 use ball::*;
 use capsule::*;
 use collider::*;
-use profiler::Profiler;
+use profiler::*;
+use collision_algorithms::*;
 
 const MIN_SIZE: f32 = 5.;
 const MAX_SIZE: f32 = 10.;
@@ -26,17 +28,21 @@ const SPAWNING_RECT: Rect = Rect {
     max: Vec2 { x: 400., y: 300. },
 };
 
+const NON_COLLIDED_COLOR: Srgba = GRAY;
+const COLLIDED_COLOR: Srgba = RED;
+
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::srgb(1., 1., 1.)))
+        .add_message::<CollisionMessage>()
         .add_plugins(DefaultPlugins)
         .add_plugins((ProfilerPlugin, /*ProfilerPlugin::update_profiler(true)*/))
         .add_plugins(ExperimentPlugin {
             first: 100,
             step: 100,
-            number_of_steps: 100,
-            sample_duration: Duration::from_secs_f32(0.5),
-            variations: 4,
+            number_of_steps: 5,
+            sample_duration: Duration::from_secs_f32(5.),
+            variations: 2,
         })
         .add_plugins(PhysicsPlugin)
         .add_plugins(ColliderPlugin)
@@ -45,10 +51,11 @@ fn main() {
         .add_systems(
             Update, (
                 add_balls.run_if(on_message::<ExperimentProgress>),
-                check_collision_with_capsules,
+                check_collisions,
                 store_profiling_data.run_if(on_message::<ExperimentProgress>),
             ).chain(),
         )
+        .add_systems(PostUpdate, affect_collision)
         .run();
 }
 
@@ -132,37 +139,20 @@ fn add_capsules(
     ));
 }
 
-fn check_collision_with_capsules(
-    circles: Query<(Entity, &CircleCollider, &MeshMaterial2d<ColorMaterial>), With<Ball>>,
-    capsules: Query<&CapsuleCollider>,
-    mut profiler: ResMut<Profiler>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+fn check_collisions(
+    circles: Query<(Entity, &CircleCollider), With<Ball>>,
+    capsules: Query<(Entity, &CapsuleCollider), With<Capsule>>,
     experiment_parameters: Res<ExperimentParameters>,
     table_index: Res<CollisionTableIndex>,
+    mut profiler: ResMut<Profiler>,
+    mut collision_writer: MessageWriter<CollisionMessage>,
 ) {
-    let start = Instant::now();
-
-    for (e1, circle, material) in circles {
-        let mat = materials.get_mut(material).unwrap();
-        let mut collided = false;
-        for capsule in capsules {
-            if circle.collide_with_capsule(capsule) {
-                collided = true;
-            }
-        }
-        'circles: for (e2, other_circle, _) in circles {
-            if e1.eq(&e2) { continue 'circles; }
-            if circle.collide_with_circle(other_circle) {
-                collided = true;
-            }
-        }
-        if collided {
-            mat.color = Color::srgb(1., 0., 0.);
-        } else {
-            mat.color = Color::srgb(0.3, 0.3, 0.3);
-        }
-    }
-    let elapsed = start.elapsed().as_nanos();
+    let elapsed = match experiment_parameters.variation_index {
+        1 => pair_detection(&circles, &capsules, &mut collision_writer),
+        2 => bounding_box(&circles, &capsules, &mut collision_writer),
+        3 => quad_tree(&circles, &capsules, &mut collision_writer),
+        _ => no_algorithm(&circles, &capsules, &mut collision_writer)
+    };
 
     profiler.record_cell_data_by_table_row_col_index(
         table_index.0,
@@ -170,6 +160,27 @@ fn check_collision_with_capsules(
         experiment_parameters.sample_index,
         elapsed,
     );
+}
+
+fn affect_collision(
+    mut collisions: MessageReader<CollisionMessage>,
+    // mut transforms: Query<(&mut Transform, &mut RigidBody)>,
+    mut materials_asset: ResMut<Assets<ColorMaterial>>,
+    material_comps: Query<&MeshMaterial2d<ColorMaterial>, With<Ball>>,
+) {
+    for ball_mat in material_comps {
+        materials_asset.get_mut(ball_mat).unwrap().color = Color::from(NON_COLLIDED_COLOR);
+    }
+
+
+    for collision in collisions.read() {
+        if let Ok(mat) = material_comps.get(collision.entity1) {
+            materials_asset.get_mut(mat).unwrap().color = Color::from(COLLIDED_COLOR);
+        }
+        if let Ok(mat) = material_comps.get(collision.entity2) {
+            materials_asset.get_mut(mat).unwrap().color = Color::from(COLLIDED_COLOR);
+        }
+    }
 }
 
 fn store_profiling_data(
