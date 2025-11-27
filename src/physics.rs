@@ -1,13 +1,14 @@
 use std::time::Instant;
 use bevy::prelude::*;
+use crate::experiment::ExperimentParameters;
 use crate::profiler::Profiler;
 
 pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, apply_gravity_and_velocity);
         app.add_systems(Startup, create_profiler_table);
+        app.add_systems(Update, apply_gravity_and_velocity);
     }
 }
 
@@ -41,24 +42,30 @@ impl RigidBody {
     }
 }
 
-static mut TABLE_INDEX: usize = 0;
+#[derive(Resource)]
+struct PhysicsTableIndex(usize);
 
-fn create_profiler_table(mut profiler: ResMut<Profiler>) {
-    unsafe {
-        TABLE_INDEX = profiler.create_table(
-            "Physics",
-            vec!["time".to_string()],
-            vec!["g & v".to_string()],
-        );
-    }
+fn create_profiler_table(
+    mut commands: Commands,
+    mut profiler: ResMut<Profiler>,
+    exp_params: Res<ExperimentParameters>,
+) {
+    let index = profiler.create_table(
+        "Physics",
+        vec!["g & v".to_string()],
+        exp_params.relevant_samples(),
+    );
+    commands.insert_resource(PhysicsTableIndex(index))
 }
 
 fn apply_gravity_and_velocity(
     bodies: Query<(&mut Transform, &mut RigidBody)>,
     time: Res<Time>,
-    /*mut profiler: ResMut<Profiler>*/
+    table_index: Res<PhysicsTableIndex>,
+    exp_params: Res<ExperimentParameters>,
+    mut profiler: ResMut<Profiler>,
 ) {
-    // let start = Instant::now();
+    let start = Instant::now();
 
     for (mut transform, mut body) in bodies {
         // apply gravity
@@ -70,9 +77,6 @@ fn apply_gravity_and_velocity(
         transform.translation += frame_diff;
     }
 
-    // unsafe {
-    //     let elapsed = start.elapsed().as_nanos();
-    //     profiler.record_cell_data_by_table_row_col_index(TABLE_INDEX, 0, 0, elapsed);
-    //     println!("{}", profiler.tables[TABLE_INDEX].get_averages()[0][0])
-    // }
+    let elapsed = start.elapsed().as_nanos();
+    profiler.record_cell_data_by_table_row_col_index(table_index.0, 0, exp_params.sample_index, elapsed);
 }

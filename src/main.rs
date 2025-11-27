@@ -8,7 +8,7 @@ mod collision_algorithms;
 
 use bevy::prelude::*;
 use bevy::color::palettes::basic::*;
-use std::time::{Duration};
+use std::time::{Duration, Instant};
 use rand::distr::StandardUniform;
 use rand::Rng;
 
@@ -25,7 +25,7 @@ const MAX_SIZE: f32 = 10.;
 
 const SPAWNING_RECT: Rect = Rect {
     min: Vec2 { x: 0., y: 0. },
-    max: Vec2 { x: 400., y: 300. },
+    max: Vec2 { x: 800., y: 500. },
 };
 
 const NON_COLLIDED_COLOR: Srgba = GRAY;
@@ -36,26 +36,30 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(1., 1., 1.)))
         .add_message::<CollisionMessage>()
         .add_plugins(DefaultPlugins)
-        .add_plugins((ProfilerPlugin, /*ProfilerPlugin::update_profiler(true)*/))
+        .add_plugins((ProfilerPlugin, UpdateProfilerPlugin))
         .add_plugins(ExperimentPlugin {
             first: 100,
             step: 100,
             number_of_steps: 5,
             sample_duration: Duration::from_secs_f32(5.),
-            variations: 2,
+            variations: 3,
         })
-        .add_plugins(PhysicsPlugin)
-        .add_plugins(ColliderPlugin)
+        .add_plugins((PhysicsPlugin, ColliderPlugin))
         .add_systems(Startup, (setup, add_balls, add_capsules).chain())
         .add_systems(PreUpdate, clear_balls.run_if(on_message::<ExperimentProgress>))
         .add_systems(
             Update, (
                 add_balls.run_if(on_message::<ExperimentProgress>),
-                check_collisions,
-                store_profiling_data.run_if(on_message::<ExperimentProgress>),
+                detect_collisions,
             ).chain(),
         )
-        .add_systems(PostUpdate, affect_collision)
+        .add_systems(
+            PostUpdate, (
+                resolve_collisions,
+                process_experiment_progress.run_if(on_message::<ExperimentProgress>),
+                write_to_csvs.run_if(on_message::<AppExit>)
+            ).chain(),
+        )
         .run();
 }
 
@@ -67,11 +71,10 @@ fn setup(mut commands: Commands, mut profiler: ResMut<Profiler>, exp_params: Res
     let algorithms: Vec<String> = vec![
         "None".to_string(),
         "PairDetection".to_string(),
-        "BoundingBox".to_string(),
+        "PairBoundingBox".to_string(),
         "QuadTree".to_string()
     ];
-    let sample_slice = Vec::from(&exp_params.sample_sizes_as_str[..exp_params.number_samples]);
-    let index = profiler.create_table("Collision", algorithms, sample_slice);
+    let index = profiler.create_table("Collision", algorithms, exp_params.relevant_samples());
     commands.insert_resource(CollisionTableIndex(index));
 }
 
@@ -139,30 +142,32 @@ fn add_capsules(
     ));
 }
 
-fn check_collisions(
-    circles: Query<(Entity, &CircleCollider), With<Ball>>,
-    capsules: Query<(Entity, &CapsuleCollider), With<Capsule>>,
-    experiment_parameters: Res<ExperimentParameters>,
+fn detect_collisions(
+    circles: Query<(Entity, &CircleCollider, &BoxCollider), With<Ball>>,
+    capsules: Query<(Entity, &CapsuleCollider, &BoxCollider), With<Capsule>>,
+    exp_params: Res<ExperimentParameters>,
     table_index: Res<CollisionTableIndex>,
     mut profiler: ResMut<Profiler>,
     mut collision_writer: MessageWriter<CollisionMessage>,
 ) {
-    let elapsed = match experiment_parameters.variation_index {
+    if exp_params.variation_index == exp_params.number_variations { return; }
+
+    let elapsed = match exp_params.variation_index {
         1 => pair_detection(&circles, &capsules, &mut collision_writer),
-        2 => bounding_box(&circles, &capsules, &mut collision_writer),
+        2 => pair_bounding_box(&circles, &capsules, &mut collision_writer),
         3 => quad_tree(&circles, &capsules, &mut collision_writer),
         _ => no_algorithm(&circles, &capsules, &mut collision_writer)
     };
 
     profiler.record_cell_data_by_table_row_col_index(
         table_index.0,
-        experiment_parameters.variation_index,
-        experiment_parameters.sample_index,
+        exp_params.variation_index,
+        exp_params.sample_index,
         elapsed,
     );
 }
 
-fn affect_collision(
+fn resolve_collisions(
     mut collisions: MessageReader<CollisionMessage>,
     // mut transforms: Query<(&mut Transform, &mut RigidBody)>,
     mut materials_asset: ResMut<Assets<ColorMaterial>>,
@@ -171,7 +176,6 @@ fn affect_collision(
     for ball_mat in material_comps {
         materials_asset.get_mut(ball_mat).unwrap().color = Color::from(NON_COLLIDED_COLOR);
     }
-
 
     for collision in collisions.read() {
         if let Ok(mat) = material_comps.get(collision.entity1) {
@@ -183,7 +187,7 @@ fn affect_collision(
     }
 }
 
-fn store_profiling_data(
+fn process_experiment_progress(
     profiler: Res<Profiler>,
     experiment_parameters: Res<ExperimentParameters>,
     collision_table_index: Res<CollisionTableIndex>,
@@ -200,8 +204,63 @@ fn store_profiling_data(
         );
 
         if message.2 { // check if this is the last sample
-            profiler.write_to_csv("Collision", "collision_times").unwrap();
             app_exit.write(AppExit::Success);
         }
     }
 }
+
+fn write_to_csvs(profiler: Res<Profiler>) {
+    profiler.write_to_csv("Collision", "collision_times").unwrap();
+    profiler.write_to_csv("Physics", "physics_times").unwrap();
+    profiler.write_to_csv("Update", "update_times").unwrap();
+}
+
+
+pub struct UpdateProfilerPlugin;
+
+impl Plugin for UpdateProfilerPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(PreStartup, add_update_profiler_table);
+        app.add_systems(First, store_update_instant);
+        app.add_systems(Last, record_update_duration);
+    }
+}
+
+#[derive(Resource)]
+struct UpdateTableInfo(usize, Instant);
+
+fn add_update_profiler_table(
+    mut commands: Commands,
+    mut profiler: ResMut<Profiler>,
+    exp_params: Res<ExperimentParameters>,
+) {
+    let columns = exp_params.relevant_samples();
+    let algorithms: Vec<String> = vec![
+        "None".to_string(),
+        "PairDetection".to_string(),
+        "PairBoundingBox".to_string(),
+        "QuadTree".to_string()
+    ];
+    let index = profiler.create_table("Update", algorithms, columns);
+    commands.insert_resource(UpdateTableInfo(index, Instant::now()))
+}
+
+fn store_update_instant(mut update_table_info: ResMut<UpdateTableInfo>) {
+    update_table_info.1 = Instant::now();
+}
+
+fn record_update_duration(
+    update_table_info: ResMut<UpdateTableInfo>,
+    exp_params: Res<ExperimentParameters>,
+    mut profiler: ResMut<Profiler>,
+) {
+    let elapsed = update_table_info.1.elapsed().as_nanos();
+    profiler.record_cell_data_by_table_row_col_index(
+        update_table_info.0,
+        exp_params.variation_index,
+        exp_params.sample_index,
+        elapsed,
+    );
+}
+
+

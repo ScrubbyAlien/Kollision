@@ -10,9 +10,21 @@ impl Plugin for ColliderPlugin {
     }
 }
 
-fn update_collider_positions(query: Query<(&mut CircleCollider, &Transform)>) {
-    for (mut circle_collider, &transform) in query {
+fn update_collider_positions(
+    circles: Query<(&mut CircleCollider, &Transform)>,
+    capsules: Query<(&mut CapsuleCollider, &Transform)>,
+    boxes: Query<(&mut BoxCollider, &Transform)>,
+) {
+    for (mut circle_collider, &transform) in circles {
         circle_collider.update_position(transform.translation);
+    }
+
+    for (mut capsule_collider, &transform) in capsules {
+        capsule_collider.update_position(transform.translation);
+    }
+
+    for (mut box_collider, &transform) in boxes {
+        box_collider.update_position(transform.translation);
     }
 }
 
@@ -104,11 +116,16 @@ impl CircleCollider {
     }
 
 
-    pub fn bounding_box(&self) -> Rect {
-        todo!()
+    pub fn relative_bound(&self) -> Rect {
+        let x = -self.radius;
+        let y = -self.radius;
+        let x1 = self.radius;
+        let y1 = self.radius;
+
+        Rect::new(x, y, x1, y1)
     }
 
-    pub fn update_position(&mut self, new_position: Vec3) {
+    fn update_position(&mut self, new_position: Vec3) {
         self.position = new_position;
     }
 }
@@ -124,5 +141,50 @@ pub struct CapsuleCollider {
 impl CapsuleCollider {
     pub fn new(radius: f32, length: f32, transform: &Transform) -> Self {
         CapsuleCollider { length, radius, position: transform.translation }
+    }
+
+    pub fn relative_bound(&self) -> Rect {
+        let x = -self.radius - self.length / 2.;
+        let y = -self.radius;
+        let x1 = self.radius + self.length / 2.;
+        let y1 = self.radius;
+
+        Rect::new(x, y, x1, y1)
+    }
+
+    fn update_position(&mut self, new_position: Vec3) {
+        self.position = new_position;
+    }
+}
+
+#[derive(Component)]
+pub struct BoxCollider {
+    pub relative_rect: Rect,
+    pub absolute_rect: Rect,
+    pub position: Vec3,
+}
+
+impl BoxCollider {
+    pub fn new(rect: Rect, transform: &Transform) -> Self {
+        let mut col = BoxCollider {
+            relative_rect: rect,
+            absolute_rect: rect,
+            position: transform.translation,
+        };
+        col.update_absolute_rect();
+
+        col
+    }
+
+    fn update_position(&mut self, new_position: Vec3) {
+        self.position = new_position;
+        self.update_absolute_rect();
+    }
+
+    fn update_absolute_rect(&mut self) {
+        self.absolute_rect.max.x = self.position.x + self.relative_rect.max.x;
+        self.absolute_rect.max.y = self.position.y + self.relative_rect.max.y;
+        self.absolute_rect.min.x = self.position.x - self.relative_rect.min.x;
+        self.absolute_rect.min.y = self.position.y - self.relative_rect.min.y;
     }
 }

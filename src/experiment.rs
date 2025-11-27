@@ -80,6 +80,10 @@ impl ExperimentParameters {
         self.sample_index += 1;
         self.sample_index < self.number_samples
     }
+
+    pub fn relevant_samples(&self) -> Vec<String> {
+        Vec::from(&self.sample_sizes_as_str[..self.number_samples])
+    }
 }
 
 fn generate_sample_sizes(first: usize, step: usize) -> [usize; 100] {
