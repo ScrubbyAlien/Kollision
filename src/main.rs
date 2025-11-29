@@ -20,7 +20,7 @@ use collider::*;
 use profiler::*;
 use collision_algorithms::*;
 
-const MIN_SIZE: f32 = 5.;
+const MIN_SIZE: f32 = 2.;
 const MAX_SIZE: f32 = 10.;
 
 const SPAWNING_RECT: Rect = Rect {
@@ -40,9 +40,9 @@ fn main() {
         .add_plugins(ExperimentPlugin {
             first: 100,
             step: 100,
-            number_of_steps: 5,
-            sample_duration: Duration::from_secs_f32(5.),
-            variations: 3,
+            number_of_steps: 100,
+            sample_duration: Duration::from_secs_f32(1.),
+            variations: 4,
         })
         .add_plugins((PhysicsPlugin, ColliderPlugin))
         .add_systems(Startup, (setup, add_balls, add_capsules).chain())
@@ -65,6 +65,8 @@ fn main() {
 
 #[derive(Resource)]
 struct CollisionTableIndex(usize);
+#[derive(Resource)]
+struct QuadTreeTableIndex(usize);
 
 fn setup(mut commands: Commands, mut profiler: ResMut<Profiler>, exp_params: Res<ExperimentParameters>) {
     commands.spawn(Camera2d);
@@ -74,8 +76,17 @@ fn setup(mut commands: Commands, mut profiler: ResMut<Profiler>, exp_params: Res
         "PairBoundingBox".to_string(),
         "QuadTree".to_string()
     ];
-    let index = profiler.create_table("Collision", algorithms, exp_params.relevant_samples());
+    let samples = exp_params.relevant_samples();
+
+    let index = profiler.create_table("Collision", algorithms, samples.clone());
     commands.insert_resource(CollisionTableIndex(index));
+
+    let qt_index = profiler.create_table(
+        "Quad Tree",
+        vec!["Build time".to_string(), "Traversal time".to_string()],
+        samples.clone(),
+    );
+    commands.insert_resource(QuadTreeTableIndex(qt_index));
 }
 
 fn add_balls(
@@ -142,20 +153,36 @@ fn add_capsules(
     ));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn detect_collisions(
     circles: Query<(Entity, &CircleCollider, &BoxCollider), With<Ball>>,
     capsules: Query<(Entity, &CapsuleCollider, &BoxCollider), With<Capsule>>,
     exp_params: Res<ExperimentParameters>,
     table_index: Res<CollisionTableIndex>,
+    quad_table_index: Res<QuadTreeTableIndex>,
     mut profiler: ResMut<Profiler>,
     mut collision_writer: MessageWriter<CollisionMessage>,
+    window: Single<&Window>,
+    gizmos: Gizmos
 ) {
     if exp_params.variation_index == exp_params.number_variations { return; }
+    let bottom_corner = Vec2::new(-window.width() / 2., -window.height() / 2.);
+    let top_corner = Vec2::new(window.width() / 2., window.height() / 2.);
+    let window_rect = Rect::from_corners(bottom_corner, top_corner);
 
     let elapsed = match exp_params.variation_index {
         1 => pair_detection(&circles, &capsules, &mut collision_writer),
         2 => pair_bounding_box(&circles, &capsules, &mut collision_writer),
-        3 => quad_tree(&circles, &capsules, &mut collision_writer),
+        3 => quad_tree(
+            &circles,
+            &capsules,
+            &mut collision_writer,
+            window_rect,
+            &mut profiler,
+            quad_table_index.0,
+            exp_params.sample_index,
+            gizmos
+        ),
         _ => no_algorithm(&circles, &capsules, &mut collision_writer)
     };
 
@@ -213,6 +240,7 @@ fn write_to_csvs(profiler: Res<Profiler>) {
     profiler.write_to_csv("Collision", "collision_times").unwrap();
     profiler.write_to_csv("Physics", "physics_times").unwrap();
     profiler.write_to_csv("Update", "update_times").unwrap();
+    profiler.write_to_csv("Quad Tree", "quad_tree_times").unwrap();
 }
 
 

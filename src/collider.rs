@@ -184,7 +184,7 @@ impl BoxCollider {
     fn update_absolute_rect(&mut self) {
         self.absolute_rect.max.x = self.position.x + self.relative_rect.max.x;
         self.absolute_rect.max.y = self.position.y + self.relative_rect.max.y;
-        self.absolute_rect.min.x = self.position.x - self.relative_rect.min.x;
-        self.absolute_rect.min.y = self.position.y - self.relative_rect.min.y;
+        self.absolute_rect.min.x = self.position.x + self.relative_rect.min.x;
+        self.absolute_rect.min.y = self.position.y + self.relative_rect.min.y;
     }
 }
