@@ -1,9 +1,6 @@
-use std::cmp::max;
 use bevy::prelude::*;
-use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
-use std::time::{Duration, Instant};
 
 pub struct ProfilerPlugin;
 
@@ -55,6 +52,7 @@ impl Profiler {
         None
     }
 
+    #[allow(unused)]
     pub fn record_cell_data(&mut self, table: &str, row: &str, column: &str, value: u128) {
         let table_index = self.table_names.iter().position(|s| { s == table }).unwrap();
         self.record_cell_data_by_table_index(table_index, row, column, value);
@@ -130,6 +128,7 @@ impl Table {
         }
     }
 
+    #[allow(unused)]
     pub fn insert_value_in_cell(&mut self, row: &str, column: &str, value: u128) {
         let row_index = self.rows.iter().position(|s| { s == row }).unwrap();
         let column_index = self.columns.iter().position(|s| { s == column }).unwrap();

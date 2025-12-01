@@ -9,6 +9,7 @@ mod collision_algorithms;
 use bevy::prelude::*;
 use bevy::color::palettes::basic::*;
 use std::time::{Duration, Instant};
+use clap::Parser;
 use rand::distr::StandardUniform;
 use rand::Rng;
 
@@ -31,18 +32,45 @@ const SPAWNING_RECT: Rect = Rect {
 const NON_COLLIDED_COLOR: Srgba = GRAY;
 const COLLIDED_COLOR: Srgba = RED;
 
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Print step execution times and draw gizmos
+    #[arg(short = 'D', long, default_value_t = false)]
+    debug: bool,
+    /// The starting step size
+    #[arg(short, long, default_value_t = 50)]
+    first: usize,
+    /// Step increment size
+    #[arg(short, long, default_value_t = 50)]
+    step: usize,
+    /// How many steps to run
+    #[arg(short, long, default_value_t = 5)]
+    number: usize,
+    /// Maximum time for each step
+    #[arg(short, long, default_value_t = 10.)]
+    duration: f32,
+    /// Min number of calculations that should be done for each step
+    #[arg(short, long, default_value_t = 200)]
+    min: usize,
+}
+
 fn main() {
+    let args = Args::parse();
+
     App::new()
         .insert_resource(ClearColor(Color::srgb(1., 1., 1.)))
         .add_message::<CollisionMessage>()
         .add_plugins(DefaultPlugins)
         .add_plugins((ProfilerPlugin, UpdateProfilerPlugin))
         .add_plugins(ExperimentPlugin {
-            first: 100,
-            step: 100,
-            number_of_steps: 100,
-            sample_duration: Duration::from_secs_f32(1.),
+            first: args.first,
+            step: args.step,
             variations: 4,
+            number_of_steps: args.number,
+            step_duration: Duration::from_secs_f32(args.duration),
+            min_calcs_per_step: args.min,
+            debug: args.debug,
         })
         .add_plugins((PhysicsPlugin, ColliderPlugin))
         .add_systems(Startup, (setup, add_balls, add_capsules).chain())
@@ -51,12 +79,12 @@ fn main() {
             Update, (
                 add_balls.run_if(on_message::<ExperimentProgress>),
                 detect_collisions,
+                process_experiment_progress.run_if(on_message::<ExperimentProgress>),
             ).chain(),
         )
         .add_systems(
             PostUpdate, (
                 resolve_collisions,
-                process_experiment_progress.run_if(on_message::<ExperimentProgress>),
                 write_to_csvs.run_if(on_message::<AppExit>)
             ).chain(),
         )
@@ -163,7 +191,7 @@ fn detect_collisions(
     mut profiler: ResMut<Profiler>,
     mut collision_writer: MessageWriter<CollisionMessage>,
     window: Single<&Window>,
-    gizmos: Gizmos
+    gizmos: Gizmos,
 ) {
     if exp_params.variation_index == exp_params.number_variations { return; }
     let bottom_corner = Vec2::new(-window.width() / 2., -window.height() / 2.);
@@ -172,7 +200,13 @@ fn detect_collisions(
 
     let elapsed = match exp_params.variation_index {
         1 => pair_detection(&circles, &capsules, &mut collision_writer),
-        2 => pair_bounding_box(&circles, &capsules, &mut collision_writer),
+        2 => pair_bounding_box(
+            &circles,
+            &capsules,
+            &mut collision_writer,
+            gizmos,
+            exp_params.debug,
+        ),
         3 => quad_tree(
             &circles,
             &capsules,
@@ -181,7 +215,8 @@ fn detect_collisions(
             &mut profiler,
             quad_table_index.0,
             exp_params.sample_index,
-            gizmos
+            gizmos,
+            exp_params.debug,
         ),
         _ => no_algorithm(&circles, &capsules, &mut collision_writer)
     };
@@ -222,13 +257,15 @@ fn process_experiment_progress(
     mut app_exit: MessageWriter<AppExit>,
 ) {
     for message in reader.read() {
-        let sample_size = &experiment_parameters.sample_sizes_as_str[message.0];
-        let nanos = profiler.tables[collision_table_index.0].get_averages()[message.1][message.0];
-        let algo = &profiler.tables[collision_table_index.0].rows[message.1];
-        println!("({algo}) Sample size: {:>5}  time: {nanos:>10.1} ns = {:>7.1} calcs per second",
-                 sample_size,
-                 1_000_000_000. / nanos
-        );
+        if experiment_parameters.debug {
+            let sample_size = &experiment_parameters.sample_sizes_as_str[message.0];
+            let nanos = profiler.tables[collision_table_index.0].get_averages()[message.1][message.0];
+            let algo = &profiler.tables[collision_table_index.0].rows[message.1];
+            println!("({algo}) Sample size: {:>5}  time: {nanos:>10.1} ns = {:>7.1} calcs per second",
+                     sample_size,
+                     1_000_000_000. / nanos
+            );
+        }
 
         if message.2 { // check if this is the last sample
             app_exit.write(AppExit::Success);
@@ -236,11 +273,17 @@ fn process_experiment_progress(
     }
 }
 
-fn write_to_csvs(profiler: Res<Profiler>) {
+fn write_to_csvs(profiler: Res<Profiler>, start_up_instant: Res<StartupInstant>) {
     profiler.write_to_csv("Collision", "collision_times").unwrap();
     profiler.write_to_csv("Physics", "physics_times").unwrap();
     profiler.write_to_csv("Update", "update_times").unwrap();
     profiler.write_to_csv("Quad Tree", "quad_tree_times").unwrap();
+
+    let elapsed = start_up_instant.0.elapsed().as_secs();
+    let mins = elapsed / 60;
+    let secs = elapsed % 60;
+
+    println!("finished: {mins} minutes {secs} seconds");
 }
 
 

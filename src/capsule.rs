@@ -32,7 +32,7 @@ pub fn create_capsule(
     let material = materials.add(color);
     let mut transform = Transform::from_translation(position);
     transform.rotate_axis(Dir3::Z, PI / 2.);
-    let collider = CapsuleCollider::new(radius, length, &transform);
+    let collider = CapsuleCollider::new(capsule.radius, capsule.length, &transform);
 
     CapsuleBundle {
         capsule,

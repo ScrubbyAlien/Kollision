@@ -1,4 +1,3 @@
-use bevy::math::NormedVectorSpace;
 use bevy::math::ops::{abs, sqrt};
 use bevy::prelude::*;
 
@@ -28,6 +27,7 @@ fn update_collider_positions(
     }
 }
 
+#[allow(unused)]
 pub struct CollisionInfo {
     pub normal: Vec2,
     pub overlap: f32,
@@ -38,6 +38,7 @@ impl CollisionInfo {
         Self { normal, overlap }
     }
 
+    #[allow(unused)]
     pub fn offset(&self) -> Vec2 {
         self.normal * self.overlap
     }

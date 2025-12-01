@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use bevy::prelude::*;
 
 pub struct ExperimentPlugin {
@@ -6,7 +6,9 @@ pub struct ExperimentPlugin {
     pub step: usize,
     pub variations: usize,
     pub number_of_steps: usize,
-    pub sample_duration: Duration,
+    pub step_duration: Duration,
+    pub min_calcs_per_step: usize,
+    pub debug: bool,
 }
 
 impl Plugin for ExperimentPlugin {
@@ -15,11 +17,14 @@ impl Plugin for ExperimentPlugin {
         app.insert_resource(ExperimentParameters::new(
             self.first,
             self.step,
-            self.number_of_steps,
-            self.sample_duration,
             self.variations,
+            self.number_of_steps,
+            self.step_duration,
+            self.min_calcs_per_step,
+            self.debug,
         ));
         app.add_systems(Update, progress_experiment);
+        app.add_systems(PreStartup, record_start_up_instant);
     }
 }
 
@@ -31,17 +36,22 @@ pub struct ExperimentParameters {
     pub number_samples: usize,
     sample_duration: Duration,
     current_sample_progress: Duration,
+    min_calcs_per_sample: usize,
+    current_calcs: usize,
     pub variation_index: usize,
     pub number_variations: usize,
+    pub debug: bool,
 }
 
 impl ExperimentParameters {
     fn new(
         first: usize,
         step: usize,
+        number_variations: usize,
         number_samples: usize,
         sample_duration: Duration,
-        number_variations: usize,
+        min_calcs_per_sample: usize,
+        debug: bool,
     ) -> ExperimentParameters {
         let sample_sizes = generate_sample_sizes(first, step);
         let mut sample_sizes_as_str: Vec<String> = Vec::with_capacity(100);
@@ -52,19 +62,23 @@ impl ExperimentParameters {
         ExperimentParameters {
             sample_sizes,
             sample_sizes_as_str,
-            sample_index: 0,
             number_samples,
-            sample_duration,
-            current_sample_progress: Duration::from_secs(0),
+            sample_index: 0,
             number_variations,
             variation_index: 0,
+            sample_duration,
+            current_sample_progress: Duration::from_secs(0),
+            min_calcs_per_sample,
+            current_calcs: 0,
+            debug,
         }
     }
 
     pub fn current_sample_size(&self) -> usize {
         self.sample_sizes[self.sample_index]
     }
-
+    
+    #[allow(unused)]
     pub fn current_sample_size_str(&self) -> String {
         self.sample_sizes_as_str[self.sample_index].clone()
     }
@@ -109,8 +123,11 @@ fn progress_experiment(
     mut writer: MessageWriter<ExperimentProgress>,
     time: Res<Time>,
 ) {
+    parameters.current_calcs += 1;
     parameters.current_sample_progress += Duration::from_secs_f32(time.delta_secs());
-    if parameters.current_sample_progress < parameters.sample_duration { return; }
+    let duration_over = parameters.current_sample_progress >= parameters.sample_duration;
+    let min_calcs_reached = parameters.current_calcs >= parameters.min_calcs_per_sample;
+    if !duration_over && !min_calcs_reached { return; }
 
     let prev_sample_size_index = parameters.sample_index;
     let prev_variation_index = parameters.variation_index;
@@ -123,9 +140,17 @@ fn progress_experiment(
     }
 
     parameters.current_sample_progress = Duration::from_secs(0);
+    parameters.current_calcs = 0;
     writer.write(ExperimentProgress(
         prev_sample_size_index,
         prev_variation_index,
         last_sample && last_variation,
     ));
+}
+
+#[derive(Resource)]
+pub struct StartupInstant(pub Instant);
+
+fn record_start_up_instant(mut commands: Commands) {
+    commands.insert_resource(StartupInstant(Instant::now()));
 }

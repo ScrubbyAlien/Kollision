@@ -1,5 +1,5 @@
 use std::time::Instant;
-use bevy::color::palettes::basic::{BLACK, GREEN};
+use bevy::color::palettes::basic::{GREEN};
 use bevy::prelude::*;
 use crate::ball::Ball;
 use crate::capsule::Capsule;
@@ -7,6 +7,7 @@ use crate::collider::*;
 use crate::profiler::Profiler;
 
 #[derive(Message)]
+#[allow(unused)]
 pub struct CollisionMessage {
     pub entity1: Entity,
     pub entity2: Entity,
@@ -121,11 +122,21 @@ pub fn pair_bounding_box(
     circles: &Query<(Entity, &CircleCollider, &BoxCollider), With<Ball>>,
     capsules: &Query<(Entity, &CapsuleCollider, &BoxCollider), With<Capsule>>,
     collision_writer: &mut MessageWriter<CollisionMessage>,
+    mut gizmos: Gizmos,
+    debug: bool,
 ) -> u128 {
     let indexable = convert_indexable(circles); // convert to vec for slice
     let start = Instant::now();
 
+    if debug {
+        for (_, _, bound) in capsules {
+            draw_gizmos_rect(&mut gizmos, &bound.absolute_rect);
+        }
+    }
+
     for (index, (e1, circle, bound)) in indexable.iter().enumerate() {
+        if debug { draw_gizmos_rect(&mut gizmos, &bound.absolute_rect); }
+
         bounded_capsule_collision(*e1, circle, bound, capsules, collision_writer);
 
         'circles: for (e2, other_circle, other_bound) in indexable[index + 1..].iter() {
@@ -156,6 +167,7 @@ pub fn quad_tree(
     table_index: usize,
     sample_size_index: usize,
     mut gizmos: Gizmos,
+    debug: bool,
 ) -> u128 {
     let start = Instant::now();
 
@@ -166,8 +178,6 @@ pub fn quad_tree(
     for (e, _, b) in capsules {
         tree_entities.push((e, b.absolute_rect));
     }
-
-    let num_entities = tree_entities.len() as f32;
 
     let quad_tree = QuadTree::new(window_rect, tree_entities);
     let flat_quad_tree = quad_tree.root_node.flatten_tree();
@@ -187,7 +197,7 @@ pub fn quad_tree(
     // let mut number_of_checks = 0;
     // println!("{}", "new traversal");
     for node in flat_quad_tree {
-        draw_gizmos_rect(&mut gizmos, node);
+        if debug { draw_gizmos_rect(&mut gizmos, &node.rect); }
 
         let mut non_checked_entities = node.contained_entities.clone();
 
@@ -222,8 +232,8 @@ pub fn quad_tree(
     start.elapsed().as_nanos()
 }
 
-fn draw_gizmos_rect(gizmos: &mut Gizmos, node: &TreeNode) {
-    gizmos.rect_2d(Isometry2d::new(node.rect.center(), Rot2::IDENTITY), node.rect.size(), GREEN);
+fn draw_gizmos_rect(gizmos: &mut Gizmos, rect: &Rect) {
+    gizmos.rect_2d(Isometry2d::new(rect.center(), Rot2::IDENTITY), rect.size(), GREEN);
 }
 
 fn evaluate_collision(
@@ -288,6 +298,7 @@ impl TreeNode {
         }
     }
 
+    #[allow(unused)]
     fn traverse(&self, target_index: usize, cur_index: usize) -> (Option<&TreeNode>, usize) {
         if target_index == cur_index { return (Some(self), cur_index); }
 
@@ -325,6 +336,7 @@ impl TreeNode {
         descendents
     }
 
+    #[allow(dead_code)]
     fn is_empty(&self) -> bool {
         self.contained_entities.is_empty()
     }
